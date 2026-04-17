@@ -100,7 +100,7 @@ APP-ONOS/
 ### Compiler le `.oar`
 
 ```bash
-cd APP-ONOS/csrmanager
+cd APP-ONOS-CISCO/csrmanager
 mvn clean package -DskipTests
 ls target/csrmanager-1.0.0.oar
 ```
@@ -122,11 +122,11 @@ section **Monitoring** → **CsrManager** par `YASMINE-KIRCH` doit apparaître *
 ### Cycle de re-déploiement
 
 ```bash
-mvn clean package -DskipTests \
-&& curl -u onos:rocks -X POST \
-   -H "Content-Type: application/octet-stream" \
-   --data-binary @target/csrmanager-1.0.0.oar \
-   "http://localhost:8181/onos/v1/applications?activate=true"
+curl -u onos:rocks \
+     -X POST \
+     -H "Content-Type: application/octet-stream" \
+     --data-binary @target/csrmanager-1.0.0.oar \
+     "http://localhost:8181/onos/v1/applications?activate=true"
 ```
 
 ---

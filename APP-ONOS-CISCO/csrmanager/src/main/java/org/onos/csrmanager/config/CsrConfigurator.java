@@ -3,10 +3,16 @@ package org.onos.csrmanager.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.onos.csrmanager.CsrNetconfSession;
+import org.onos.csrmanager.util.XmlParser;
 import org.onosproject.net.DeviceId;
 import org.onosproject.netconf.NetconfController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Envoie des opérations NETCONF <edit-config> vers le routeur Cisco IOS-XE.
@@ -23,15 +29,13 @@ import org.slf4j.LoggerFactory;
  * ═══════════════════════════════════════════════════════════════════
  * IMPORTANT — Format edit-config NETCONF pour Cisco IOS-XE :
  *
- * On passe à session.editConfig() uniquement le contenu du <config>,
- * sans les balises <edit-config> ni <rpc> (ONOS les ajoute).
+ * On passe à session.editConfig() uniquement le contenu INTERNE du <config>,
+ * sans les balises <config>, <edit-config> ni <rpc> (ONOS les ajoute).
  *
  * Exemple :
- *   <config>
- *     <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native">
- *       <hostname>MonRouteur</hostname>
- *     </native>
- *   </config>
+ *   <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native">
+ *     <hostname>MonRouteur</hostname>
+ *   </native>
  * ═══════════════════════════════════════════════════════════════════
  */
 public class CsrConfigurator {
@@ -61,6 +65,66 @@ public class CsrConfigurator {
         return n;
     }
 
+    private ObjectNode applyConfig(DeviceId deviceId, String payload, String action) {
+        String reply = session(deviceId).editConfigReply(payload);
+        if (isSuccessfulReply(reply)) {
+            log.info("[CsrConfig] {} → OK", action);
+            return ok();
+        }
+        String error = extractRpcError(reply);
+        log.warn("[CsrConfig] {} → FAIL ({})", action, error);
+        return fail(error);
+    }
+
+    private boolean isSuccessfulReply(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return false;
+        }
+        if (!reply.contains("<rpc-error>")) {
+            return true;
+        }
+        if (reply.contains("<ok/>")) {
+            return true;
+        }
+        return reply.contains("<error-severity>warning</error-severity>");
+    }
+
+    private String extractRpcError(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return "aucune réponse NETCONF reçue depuis ONOS";
+        }
+
+        Document doc = XmlParser.parse(reply);
+        if (doc == null) {
+            return "réponse NETCONF invalide ou illisible";
+        }
+
+        Element rpcError = XmlParser.firstElement(doc, "rpc-error");
+        if (rpcError == null) {
+            return "edit-config refusé par le routeur";
+        }
+
+        List<String> parts = new ArrayList<>();
+        String message = XmlParser.getText(rpcError, "error-message");
+        String tag = XmlParser.getText(rpcError, "error-tag");
+        String path = XmlParser.getText(rpcError, "error-path");
+
+        if (!message.isBlank()) {
+            parts.add(message);
+        }
+        if (!tag.isBlank()) {
+            parts.add("tag=" + tag);
+        }
+        if (!path.isBlank()) {
+            parts.add("path=" + path);
+        }
+
+        if (parts.isEmpty()) {
+            return "edit-config refusé par le routeur";
+        }
+        return String.join(" | ", parts);
+    }
+
     // ── Hostname ─────────────────────────────────────────────────────
     // YANG : Cisco-IOS-XE-native:native/hostname
 
@@ -74,15 +138,11 @@ public class CsrConfigurator {
             return fail("hostname ne peut pas être vide");
 
         String config =
-            "<config>" +
-            "  <native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
-            "    <hostname>" + escapeXml(hostname) + "</hostname>" +
-            "  </native>" +
-            "</config>";
+            "<native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
+            "  <hostname>" + escapeXml(hostname) + "</hostname>" +
+            "</native>";
 
-        boolean ok = session(deviceId).editConfig(config);
-        log.info("[CsrConfig] setHostname({}) → {}", hostname, ok ? "OK" : "FAIL");
-        return ok ? ok() : fail("edit-config refusé par le routeur");
+        return applyConfig(deviceId, config, "setHostname(" + hostname + ")");
     }
 
     // ── Interface ────────────────────────────────────────────────────
@@ -106,7 +166,6 @@ public class CsrConfigurator {
             return fail("Le nom de l'interface est requis");
 
         StringBuilder iface = new StringBuilder();
-        iface.append("<config>");
         iface.append("<interfaces xmlns=\"urn:ietf:params:xml:ns:yang:ietf-interfaces\">");
         iface.append("<interface>");
         iface.append("<name>").append(escapeXml(name)).append("</name>");
@@ -116,11 +175,8 @@ public class CsrConfigurator {
             iface.append("<enabled>").append(enabled).append("</enabled>");
         iface.append("</interface>");
         iface.append("</interfaces>");
-        iface.append("</config>");
 
-        boolean ok = session(deviceId).editConfig(iface.toString());
-        log.info("[CsrConfig] configureInterface({}) → {}", name, ok ? "OK" : "FAIL");
-        return ok ? ok() : fail("edit-config refusé par le routeur");
+        return applyConfig(deviceId, iface.toString(), "configureInterface(" + name + ")");
     }
 
     // ── Route statique — Ajout ────────────────────────────────────────
@@ -137,22 +193,18 @@ public class CsrConfigurator {
             return fail("prefix, mask et nextHop sont requis");
 
         String config =
-            "<config>" +
-            "  <native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
-            "    <ip><route>" +
-            "      <ip-route-interface-forwarding-list>" +
-            "        <prefix>" + escapeXml(prefix) + "</prefix>" +
-            "        <mask>"   + escapeXml(mask)   + "</mask>" +
-            "        <fwd-list><fwd>" + escapeXml(nextHop) + "</fwd></fwd-list>" +
-            "      </ip-route-interface-forwarding-list>" +
-            "    </route></ip>" +
-            "  </native>" +
-            "</config>";
+            "<native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
+            "  <ip><route>" +
+            "    <ip-route-interface-forwarding-list>" +
+            "      <prefix>" + escapeXml(prefix) + "</prefix>" +
+            "      <mask>"   + escapeXml(mask)   + "</mask>" +
+            "      <fwd-list><fwd>" + escapeXml(nextHop) + "</fwd></fwd-list>" +
+            "    </ip-route-interface-forwarding-list>" +
+            "  </route></ip>" +
+            "</native>";
 
-        boolean ok = session(deviceId).editConfig(config);
-        log.info("[CsrConfig] addStaticRoute({}/{} via {}) → {}",
-                 prefix, mask, nextHop, ok ? "OK" : "FAIL");
-        return ok ? ok() : fail("edit-config refusé par le routeur");
+        return applyConfig(deviceId, config,
+                "addStaticRoute(" + prefix + "/" + mask + " via " + nextHop + ")");
     }
 
     // ── Route statique — Suppression ─────────────────────────────────
@@ -168,24 +220,20 @@ public class CsrConfigurator {
             return fail("prefix, mask et nextHop sont requis");
 
         String config =
-            "<config>" +
-            "  <native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
-            "    <ip><route>" +
-            "      <ip-route-interface-forwarding-list" +
-            "          xmlns:nc=\"urn:ietf:params:xml:ns:netconf:base:1.0\"" +
-            "          nc:operation=\"delete\">" +
-            "        <prefix>" + escapeXml(prefix) + "</prefix>" +
-            "        <mask>"   + escapeXml(mask)   + "</mask>" +
-            "        <fwd-list><fwd>" + escapeXml(nextHop) + "</fwd></fwd-list>" +
-            "      </ip-route-interface-forwarding-list>" +
-            "    </route></ip>" +
-            "  </native>" +
-            "</config>";
+            "<native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
+            "  <ip><route>" +
+            "    <ip-route-interface-forwarding-list" +
+            "        xmlns:nc=\"urn:ietf:params:xml:ns:netconf:base:1.0\"" +
+            "        nc:operation=\"delete\">" +
+            "      <prefix>" + escapeXml(prefix) + "</prefix>" +
+            "      <mask>"   + escapeXml(mask)   + "</mask>" +
+            "      <fwd-list><fwd>" + escapeXml(nextHop) + "</fwd></fwd-list>" +
+            "    </ip-route-interface-forwarding-list>" +
+            "  </route></ip>" +
+            "</native>";
 
-        boolean ok = session(deviceId).editConfig(config);
-        log.info("[CsrConfig] deleteStaticRoute({}/{} via {}) → {}",
-                 prefix, mask, nextHop, ok ? "OK" : "FAIL");
-        return ok ? ok() : fail("edit-config refusé par le routeur");
+        return applyConfig(deviceId, config,
+                "deleteStaticRoute(" + prefix + "/" + mask + " via " + nextHop + ")");
     }
 
     // ── NTP ──────────────────────────────────────────────────────────
@@ -201,23 +249,19 @@ public class CsrConfigurator {
             return fail("L'adresse du serveur NTP est requise");
 
         String config =
-            "<config>" +
-            "  <native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
-            "    <ntp>" +
-            "      <Cisco-IOS-XE-ntp:server" +
-            "          xmlns:Cisco-IOS-XE-ntp=" +
-            "          \"http://cisco.com/ns/yang/Cisco-IOS-XE-ntp\">" +
-            "        <server-list>" +
-            "          <ip-address>" + escapeXml(ntpServer) + "</ip-address>" +
-            "        </server-list>" +
-            "      </Cisco-IOS-XE-ntp:server>" +
-            "    </ntp>" +
-            "  </native>" +
-            "</config>";
+            "<native xmlns=\"http://cisco.com/ns/yang/Cisco-IOS-XE-native\">" +
+            "  <ntp>" +
+            "    <Cisco-IOS-XE-ntp:server" +
+            "        xmlns:Cisco-IOS-XE-ntp=" +
+            "        \"http://cisco.com/ns/yang/Cisco-IOS-XE-ntp\">" +
+            "      <server-list>" +
+            "        <ip-address>" + escapeXml(ntpServer) + "</ip-address>" +
+            "      </server-list>" +
+            "    </Cisco-IOS-XE-ntp:server>" +
+            "  </ntp>" +
+            "</native>";
 
-        boolean ok = session(deviceId).editConfig(config);
-        log.info("[CsrConfig] setNtpServer({}) → {}", ntpServer, ok ? "OK" : "FAIL");
-        return ok ? ok() : fail("edit-config refusé par le routeur");
+        return applyConfig(deviceId, config, "setNtpServer(" + ntpServer + ")");
     }
 
     // ── Utilitaire ───────────────────────────────────────────────────

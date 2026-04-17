@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, RefreshCw, Plus, Trash2 } from 'lucide-react';
+import { parseCiscoResponse } from '@/lib/cisco-api';
 import type {
   CiscoDevice, CiscoRoute, CiscoArpEntry, CiscoOspfStatus,
   CiscoBgpRoute, CiscoCdpNeighbor, CiscoNtpStatus, CiscoDhcpPool,
@@ -159,7 +160,7 @@ export default function CiscoRoutingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRoute),
       });
-      if (!response.ok) throw new Error('Failed to add route');
+      await parseCiscoResponse(response, 'Failed to add route');
       setAddRouteModal(false);
       setNewRoute({ prefix: '', mask: '255.255.255.0', next_hop: '', distance: 1 });
       await fetchRoutingData();
@@ -180,7 +181,7 @@ export default function CiscoRoutingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prefix, mask, next_hop: nextHop }),
       });
-      if (!response.ok) throw new Error('Failed to delete route');
+      await parseCiscoResponse(response, 'Failed to delete route');
       await fetchRoutingData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error deleting route');

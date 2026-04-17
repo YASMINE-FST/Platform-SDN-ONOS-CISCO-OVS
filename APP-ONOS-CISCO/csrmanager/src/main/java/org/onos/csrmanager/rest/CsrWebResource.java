@@ -93,6 +93,13 @@ public class CsrWebResource extends AbstractWebResource {
         return get(CsrManagerService.class);
     }
 
+    private Response configResult(ObjectNode result) {
+        if (!result.path("success").asBoolean(false)) {
+            return Response.status(Response.Status.BAD_GATEWAY).entity(result).build();
+        }
+        return ok(result).build();
+    }
+
     // ════════════════════════════════════════════════════════════════
     //  DEVICES
     // ════════════════════════════════════════════════════════════════
@@ -265,7 +272,7 @@ public class CsrWebResource extends AbstractWebResource {
         if (hostname.isEmpty())
             return Response.status(400)
                     .entity("{\"error\":\"Le champ 'hostname' est requis\"}").build();
-        return ok(svc().setHostname(resolveDevice(device), hostname)).build();
+        return configResult(svc().setHostname(resolveDevice(device), hostname));
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -290,7 +297,7 @@ public class CsrWebResource extends AbstractWebResource {
             return Response.status(400)
                     .entity("{\"error\":\"Au moins 'description' ou 'enabled' requis\"}").build();
 
-        return ok(svc().configureInterface(resolveDevice(device), name, desc, enabled)).build();
+        return configResult(svc().configureInterface(resolveDevice(device), name, desc, enabled));
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -312,7 +319,7 @@ public class CsrWebResource extends AbstractWebResource {
             return Response.status(400)
                     .entity("{\"error\":\"prefix, mask et next_hop sont requis\"}").build();
 
-        return ok(svc().addStaticRoute(resolveDevice(device), prefix, mask, nextHop)).build();
+        return configResult(svc().addStaticRoute(resolveDevice(device), prefix, mask, nextHop));
     }
 
     @DELETE @Path("config/routes/static")
@@ -330,7 +337,7 @@ public class CsrWebResource extends AbstractWebResource {
             return Response.status(400)
                     .entity("{\"error\":\"prefix, mask et next_hop sont requis\"}").build();
 
-        return ok(svc().deleteStaticRoute(resolveDevice(device), prefix, mask, nextHop)).build();
+        return configResult(svc().deleteStaticRoute(resolveDevice(device), prefix, mask, nextHop));
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -348,7 +355,7 @@ public class CsrWebResource extends AbstractWebResource {
         if (server.isEmpty())
             return Response.status(400)
                     .entity("{\"error\":\"Le champ 'server' est requis\"}").build();
-        return ok(svc().setNtpServer(resolveDevice(device), server)).build();
+        return configResult(svc().setNtpServer(resolveDevice(device), server));
     }
 
     // ── Helper ────────────────────────────────────────────────────────

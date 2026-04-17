@@ -78,7 +78,19 @@ async def call_csrmanager(
 
             if response.status_code >= 400:
                 logger.error("CsrManager error: %s - %s", response.status_code, response.text)
-                raise HTTPException(status_code=response.status_code, detail=response.text)
+                detail = response.text
+                try:
+                    error_payload = response.json()
+                    if isinstance(error_payload, dict):
+                        detail = (
+                            error_payload.get("error")
+                            or error_payload.get("message")
+                            or error_payload.get("detail")
+                            or detail
+                        )
+                except ValueError:
+                    pass
+                raise HTTPException(status_code=response.status_code, detail=detail)
 
             return response.json()
     except HTTPException:

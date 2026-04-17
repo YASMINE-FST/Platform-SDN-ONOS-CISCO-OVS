@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, RefreshCw, Check, X } from 'lucide-react';
+import { parseCiscoResponse } from '@/lib/cisco-api';
 import type { CiscoDevice, CiscoInterface, CiscoRoute } from '@/lib/cisco-types';
 
 type EditableInterface = CiscoInterface & { enabled?: boolean };
@@ -109,7 +110,7 @@ export default function CiscoConfigPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hostname }),
       });
-      if (!response.ok) throw new Error('Failed to update hostname');
+      await parseCiscoResponse(response, 'Failed to update hostname');
       setSuccess('Hostname updated successfully');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -133,7 +134,7 @@ export default function CiscoConfigPage() {
           enabled: editingInterface.enabled,
         }),
       });
-      if (!response.ok) throw new Error('Failed to save interface configuration');
+      await parseCiscoResponse(response, 'Failed to save interface configuration');
       setSuccess(`Interface ${editingInterface.name} configured`);
       setEditingInterface(null);
       setTimeout(() => setSuccess(null), 3000);
@@ -158,7 +159,7 @@ export default function CiscoConfigPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRoute),
       });
-      if (!response.ok) throw new Error('Failed to add route');
+      await parseCiscoResponse(response, 'Failed to add route');
       setSuccess('Static route added successfully');
       setNewRoute({ prefix: '', mask: '255.255.255.0', next_hop: '', distance: 1 });
       setAddingRoute(false);
@@ -181,7 +182,7 @@ export default function CiscoConfigPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prefix, mask, next_hop: nextHop }),
       });
-      if (!response.ok) throw new Error('Failed to delete route');
+      await parseCiscoResponse(response, 'Failed to delete route');
       setSuccess('Route deleted successfully');
       setTimeout(() => setSuccess(null), 3000);
       await fetchConfiguration();
@@ -205,7 +206,7 @@ export default function CiscoConfigPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: ntpConfig.servers[0] }),
       });
-      if (!response.ok) throw new Error('Failed to save NTP configuration');
+      await parseCiscoResponse(response, 'Failed to save NTP configuration');
       setSuccess('NTP configuration saved');
       setTimeout(() => setSuccess(null), 3000);
       await fetchConfiguration();

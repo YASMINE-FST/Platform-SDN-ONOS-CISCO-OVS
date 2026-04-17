@@ -94,19 +94,48 @@ public class CsrNetconfSession {
     /**
      * Envoie un RPC <edit-config target="running"> avec la config fournie.
      *
-     * @param configXml  Contenu du <config>…</config>
-     *                   (juste le contenu YANG, sans les balises <edit-config>)
+     * @param configXml  Contenu INTERNE du <config>…</config>
+     *                   (sans les balises <config>, <edit-config> ni <rpc>)
      * @return true si succès
      */
     public boolean editConfig(String configXml) {
+        String reply = editConfigReply(configXml);
+        return isSuccessfulReply(reply);
+    }
+
+    /**
+     * Envoie un <edit-config> et retourne le XML brut de la réponse.
+     *
+     * @param configXml         Contenu INTERNE du <config>…</config>
+     * @param defaultOperation  Optionnel, ex: "merge" ou "replace"
+     * @return XML complet du rpc-reply, ou null en cas d'erreur locale ONOS/NETCONF
+     */
+    public String editConfigReply(String configXml, String defaultOperation) {
         NetconfSession s = session();
-        if (s == null) return false;
+        if (s == null) return null;
+        String payload = configXml == null ? "" : configXml.trim();
         try {
-            return s.editConfig(DatastoreId.RUNNING, null, configXml);
+            StringBuilder rpc = new StringBuilder();
+            rpc.append("<edit-config>\n");
+            rpc.append("<target><running/></target>\n");
+            if (defaultOperation != null && !defaultOperation.isBlank()) {
+                rpc.append("<default-operation>")
+                   .append(defaultOperation)
+                   .append("</default-operation>\n");
+            }
+            rpc.append("<config xmlns:nc=\"urn:ietf:params:xml:ns:netconf:base:1.0\">\n");
+            rpc.append(payload);
+            rpc.append("\n</config>\n");
+            rpc.append("</edit-config>\n");
+            return s.doWrappedRpc(rpc.toString());
         } catch (NetconfException e) {
             log.warn("NETCONF edit-config error [{}] : {}", deviceId, e.getMessage());
-            return false;
+            return null;
         }
+    }
+
+    public String editConfigReply(String configXml) {
+        return editConfigReply(configXml, null);
     }
 
     /**
@@ -134,5 +163,18 @@ public class CsrNetconfSession {
 
     public boolean isAvailable() {
         return session() != null;
+    }
+
+    private boolean isSuccessfulReply(String replyXml) {
+        if (replyXml == null || replyXml.isBlank()) {
+            return false;
+        }
+        if (!replyXml.contains("<rpc-error>")) {
+            return true;
+        }
+        if (replyXml.contains("<ok/>")) {
+            return true;
+        }
+        return replyXml.contains("<error-severity>warning</error-severity>");
     }
 }

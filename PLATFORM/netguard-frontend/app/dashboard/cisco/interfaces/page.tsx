@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, Wifi, RefreshCw, Power, Settings } from 'lucide-react';
+import { parseCiscoResponse } from '@/lib/cisco-api';
 import type { CiscoDevice, CiscoInterface } from '@/lib/cisco-types';
 
 interface InterfaceConfigModal {
@@ -94,7 +95,7 @@ export default function CiscoInterfacesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: interfaceName, enabled: true }),
       });
-      if (!response.ok) throw new Error('Failed to enable interface');
+      await parseCiscoResponse(response, 'Failed to enable interface');
       await fetchInterfaces();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error enabling interface');
@@ -111,7 +112,7 @@ export default function CiscoInterfacesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: interfaceName, enabled: false }),
       });
-      if (!response.ok) throw new Error('Failed to disable interface');
+      await parseCiscoResponse(response, 'Failed to disable interface');
       await fetchInterfaces();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error disabling interface');
@@ -141,7 +142,7 @@ export default function CiscoInterfacesPage() {
           enabled: configModal.enabled,
         }),
       });
-      if (!response.ok) throw new Error('Failed to save configuration');
+      await parseCiscoResponse(response, 'Failed to save configuration');
       setConfigModal(null);
       await fetchInterfaces();
     } catch (err) {
