@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, RefreshCw, Check, X } from 'lucide-react';
-import type { CiscoDevice } from '@/lib/cisco-types';
+import type { CiscoDevice, CiscoInterface, CiscoRoute } from '@/lib/cisco-types';
+
+type EditableInterface = CiscoInterface & { enabled?: boolean };
 
 export default function CiscoConfigPage() {
   const [selectedDevice, setSelectedDevice] = useState('');
@@ -14,15 +16,21 @@ export default function CiscoConfigPage() {
 
   // Form states
   const [hostname, setHostname] = useState('');
-  const [interfaces, setInterfaces] = useState<any[]>([]);
-  const [staticRoutes, setStaticRoutes] = useState<any[]>([]);
+  const [interfaces, setInterfaces] = useState<CiscoInterface[]>([]);
+  const [staticRoutes, setStaticRoutes] = useState<CiscoRoute[]>([]);
   const [ntpConfig, setNtpConfig] = useState({ servers: [] as string[] });
 
   // Edit states
-  const [editingInterface, setEditingInterface] = useState<any>(null);
+  const [editingInterface, setEditingInterface] = useState<EditableInterface | null>(null);
   const [addingRoute, setAddingRoute] = useState(false);
   const [newRoute, setNewRoute] = useState({ prefix: '', mask: '255.255.255.0', next_hop: '', distance: 1 });
   const [addingNtpServer, setAddingNtpServer] = useState('');
+
+  function withDevice(path: string) {
+    if (!selectedDevice) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}device=${encodeURIComponent(selectedDevice)}`;
+  }
 
   // Fetch devices on mount
   useEffect(() => {
@@ -44,7 +52,7 @@ export default function CiscoConfigPage() {
       const devicesList = Array.isArray(data) ? data : (data.devices || []);
       setDevices(devicesList);
       if (devicesList.length > 0) {
-        setSelectedDevice(devicesList[0].id || '');
+        setSelectedDevice(devicesList[0].device_id || devicesList[0].id || '');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching devices');
@@ -58,10 +66,10 @@ export default function CiscoConfigPage() {
 
       // Fetch all config data in parallel
       const [hostResp, ifaceResp, routeResp, ntpResp] = await Promise.all([
-        fetch('/api/cisco/version').then((r) => (r.ok ? r.json() : {})),
-        fetch('/api/cisco/interfaces/oper').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/routes/static').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/ntp').then((r) => (r.ok ? r.json() : { servers: [] })),
+        fetch(withDevice('/api/cisco/version')).then((r) => (r.ok ? r.json() : {})),
+        fetch(withDevice('/api/cisco/interfaces/oper')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/routes/static')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/ntp')).then((r) => (r.ok ? r.json() : { peers: [] })),
       ]);
 
       // Extract hostname from version response
@@ -73,9 +81,14 @@ export default function CiscoConfigPage() {
       setInterfaces(Array.isArray(ifaceResp) ? ifaceResp : []);
       setStaticRoutes(Array.isArray(routeResp) ? routeResp : []);
 
-      if (ntpResp.servers) {
-        setNtpConfig({ servers: ntpResp.servers });
-      }
+      const servers = Array.isArray(ntpResp?.servers)
+        ? ntpResp.servers
+        : Array.isArray(ntpResp?.peers)
+          ? ntpResp.peers
+              .map((peer: { address?: string }) => peer.address)
+              .filter((address: string | undefined): address is string => Boolean(address))
+          : [];
+      setNtpConfig({ servers });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching configuration');
     } finally {
@@ -91,7 +104,7 @@ export default function CiscoConfigPage() {
 
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/hostname', {
+      const response = await fetch(withDevice('/api/cisco/config/hostname'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hostname }),
@@ -111,7 +124,7 @@ export default function CiscoConfigPage() {
 
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/interface', {
+      const response = await fetch(withDevice('/api/cisco/config/interface'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,7 +153,7 @@ export default function CiscoConfigPage() {
 
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/routes/static', {
+      const response = await fetch(withDevice('/api/cisco/config/routes/static'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRoute),
@@ -163,7 +176,7 @@ export default function CiscoConfigPage() {
 
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/routes/static', {
+      const response = await fetch(withDevice('/api/cisco/config/routes/static'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prefix, mask, next_hop: nextHop }),
@@ -180,16 +193,22 @@ export default function CiscoConfigPage() {
   };
 
   const handleSaveNtp = async () => {
+    if (!ntpConfig.servers.length) {
+      setError('Please add an NTP server first');
+      return;
+    }
+
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/ntp', {
+      const response = await fetch(withDevice('/api/cisco/config/ntp'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ servers: ntpConfig.servers }),
+        body: JSON.stringify({ server: ntpConfig.servers[0] }),
       });
       if (!response.ok) throw new Error('Failed to save NTP configuration');
       setSuccess('NTP configuration saved');
       setTimeout(() => setSuccess(null), 3000);
+      await fetchConfiguration();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error saving NTP config');
     } finally {
@@ -355,7 +374,10 @@ export default function CiscoConfigPage() {
                           )}
                         </div>
                         <button
-                          onClick={() => setEditingInterface(iface)}
+                          onClick={() => setEditingInterface({
+                            ...iface,
+                            enabled: iface.enabled ?? iface.oper_status === 'up',
+                          })}
                           className="px-3 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                         >
                           Edit
@@ -552,11 +574,11 @@ export default function CiscoConfigPage() {
                 <input
                   type="checkbox"
                   id="enabled"
-                  checked={editingInterface.oper_status === 'up'}
+                  checked={Boolean(editingInterface.enabled)}
                   onChange={(e) =>
                     setEditingInterface({
                       ...editingInterface,
-                      oper_status: e.target.checked ? 'up' : 'down',
+                      enabled: e.target.checked,
                     })
                   }
                   className="w-4 h-4"

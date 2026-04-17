@@ -1,8 +1,28 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { AlertCircle, RefreshCw, Download, TrendingUp, Thermometer, Wind } from 'lucide-react';
-import type { CiscoDevice } from '@/lib/cisco-types';
+import { AlertCircle, RefreshCw, Download, TrendingUp, Thermometer } from 'lucide-react';
+import type {
+  CiscoDevice,
+  CiscoLogEntry,
+  CiscoMemoryPool,
+  CiscoProcess,
+} from '@/lib/cisco-types';
+
+interface CiscoEnvironmentSensor {
+  name?: string;
+  location?: string;
+  state?: string;
+  current_reading?: number;
+  units?: string;
+}
+
+interface CiscoCpuHistoryEntry {
+  timestamp: string;
+  cpu_usage: number;
+}
+
+type CiscoUiLogEntry = CiscoLogEntry & { level?: string };
 
 export default function CiscoLogsPage() {
   const [selectedDevice, setSelectedDevice] = useState('');
@@ -11,15 +31,43 @@ export default function CiscoLogsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [logs, setLogs] = useState<any[]>([]);
-  const [processes, setProcesses] = useState<any[]>([]);
-  const [environment, setEnvironment] = useState<any>(null);
-  const [cpuHistory, setCpuHistory] = useState<any[]>([]);
-  const [memoryHistory, setMemoryHistory] = useState<any[]>([]);
+  const [logs, setLogs] = useState<CiscoUiLogEntry[]>([]);
+  const [processes, setProcesses] = useState<CiscoProcess[]>([]);
+  const [environment, setEnvironment] = useState<CiscoEnvironmentSensor[]>([]);
+  const [cpuHistory, setCpuHistory] = useState<CiscoCpuHistoryEntry[]>([]);
+  const [memoryHistory, setMemoryHistory] = useState<CiscoMemoryPool[]>([]);
 
   const [logFilter, setLogFilter] = useState('all');
   const [logSearch, setLogSearch] = useState('');
-  const [processSort, setProcessSort] = useState('memory'); // memory or cpu
+  const [processSort, setProcessSort] = useState('holding'); // holding or net
+
+  function withDevice(path: string) {
+    if (!selectedDevice) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}device=${encodeURIComponent(selectedDevice)}`;
+  }
+
+  function normalizeLogs(data: unknown) {
+    if (!Array.isArray(data)) return [];
+    return data.map((log) => ({
+      ...log,
+      level: String(log.level || log.severity || '').toUpperCase(),
+      message: String(log.message || ''),
+    }));
+  }
+
+  function normalizeCpuHistory(data: unknown) {
+    if (!Array.isArray(data)) return [];
+    return data.map((entry) => ({
+      ...entry,
+      timestamp: entry.timestamp || entry.ts,
+      cpu_usage: entry.cpu_usage ?? entry.five_seconds ?? 0,
+    }));
+  }
+
+  function formatMb(value?: number) {
+    return `${(((value || 0) as number) / (1024 * 1024)).toFixed(2)}MB`;
+  }
 
   // Fetch devices on mount
   useEffect(() => {
@@ -41,7 +89,7 @@ export default function CiscoLogsPage() {
       const devicesList = Array.isArray(data) ? data : (data.devices || []);
       setDevices(devicesList);
       if (devicesList.length > 0) {
-        setSelectedDevice(devicesList[0].id || '');
+        setSelectedDevice(devicesList[0].device_id || devicesList[0].id || '');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching devices');
@@ -55,18 +103,18 @@ export default function CiscoLogsPage() {
 
       // Fetch all data in parallel
       const [logsRes, procRes, envRes, cpuRes, memRes] = await Promise.all([
-        fetch('/api/cisco/logs').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/processes').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/environment').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/cisco/cpu/history').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/memory').then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/logs')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/processes')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/environment')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/cpu/history')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/memory')).then((r) => (r.ok ? r.json() : [])),
       ]);
 
-      setLogs(Array.isArray(logsRes) ? logsRes.slice(0, 100) : []);
+      setLogs(normalizeLogs(logsRes).slice(0, 100));
       setProcesses(Array.isArray(procRes) ? procRes : []);
-      setEnvironment(envRes);
-      setCpuHistory(Array.isArray(cpuRes) ? cpuRes : []);
-      setMemoryHistory(Array.isArray(memRes) ? (Array.isArray(memRes) ? memRes : [memRes]) : []);
+      setEnvironment(Array.isArray(envRes) ? envRes : []);
+      setCpuHistory(normalizeCpuHistory(cpuRes));
+      setMemoryHistory(Array.isArray(memRes) ? memRes : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching data');
     } finally {
@@ -78,17 +126,17 @@ export default function CiscoLogsPage() {
   const filteredLogs = logs.filter((log) => {
     const levelMatch = logFilter === 'all' || log.level === logFilter;
     const searchMatch =
-      log.message.toLowerCase().includes(logSearch.toLowerCase()) ||
+      String(log.message || '').toLowerCase().includes(logSearch.toLowerCase()) ||
       (log.level && log.level.toLowerCase().includes(logSearch.toLowerCase()));
     return levelMatch && searchMatch;
   });
 
   // Sort processes
   const sortedProcesses = [...processes].sort((a, b) => {
-    if (processSort === 'memory') {
-      return (b.memory_percent || 0) - (a.memory_percent || 0);
+    if (processSort === 'holding') {
+      return (b.holding || 0) - (a.holding || 0);
     } else {
-      return (b.cpu_percent || 0) - (a.cpu_percent || 0);
+      return (b.net || 0) - (a.net || 0);
     }
   });
 
@@ -222,7 +270,7 @@ export default function CiscoLogsPage() {
                       <div
                         key={idx}
                         className={`p-3 rounded border text-sm font-mono ${
-                          log.level === 'ERROR'
+                            log.level === 'ERROR'
                             ? 'bg-red-50 border-red-200 text-red-900'
                             : log.level === 'WARNING'
                               ? 'bg-yellow-50 border-yellow-200 text-yellow-900'
@@ -250,24 +298,24 @@ export default function CiscoLogsPage() {
               <div className="space-y-4">
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setProcessSort('memory')}
+                    onClick={() => setProcessSort('holding')}
                     className={`px-4 py-2 rounded-lg font-medium ${
-                      processSort === 'memory'
+                      processSort === 'holding'
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    Sort by Memory
+                    Sort by Holding
                   </button>
                   <button
-                    onClick={() => setProcessSort('cpu')}
+                    onClick={() => setProcessSort('net')}
                     className={`px-4 py-2 rounded-lg font-medium ${
-                      processSort === 'cpu'
+                      processSort === 'net'
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    Sort by CPU
+                    Sort by Net
                   </button>
                 </div>
 
@@ -277,9 +325,10 @@ export default function CiscoLogsPage() {
                       <tr>
                         <th className="px-4 py-2 text-left text-gray-700 font-medium">Name</th>
                         <th className="px-4 py-2 text-left text-gray-700 font-medium">PID</th>
-                        <th className="px-4 py-2 text-left text-gray-700 font-medium">CPU %</th>
-                        <th className="px-4 py-2 text-left text-gray-700 font-medium">Memory %</th>
-                        <th className="px-4 py-2 text-left text-gray-700 font-medium">Memory (MB)</th>
+                        <th className="px-4 py-2 text-left text-gray-700 font-medium">Holding</th>
+                        <th className="px-4 py-2 text-left text-gray-700 font-medium">Allocated</th>
+                        <th className="px-4 py-2 text-left text-gray-700 font-medium">Freed</th>
+                        <th className="px-4 py-2 text-left text-gray-700 font-medium">Net</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -288,32 +337,15 @@ export default function CiscoLogsPage() {
                           <tr key={idx} className="hover:bg-gray-50">
                             <td className="px-4 py-2">{proc.name}</td>
                             <td className="px-4 py-2">{proc.pid}</td>
-                            <td className="px-4 py-2">
-                              <div className="w-16 bg-gray-200 rounded-full h-2">
-                                <div
-                                  className="bg-blue-600 h-2 rounded-full"
-                                  style={{
-                                    width: `${Math.min(proc.cpu_percent || 0, 100)}%`,
-                                  }}
-                                />
-                              </div>
-                            </td>
-                            <td className="px-4 py-2">
-                              <div className="w-16 bg-gray-200 rounded-full h-2">
-                                <div
-                                  className="bg-orange-600 h-2 rounded-full"
-                                  style={{
-                                    width: `${Math.min(proc.memory_percent || 0, 100)}%`,
-                                  }}
-                                />
-                              </div>
-                            </td>
-                            <td className="px-4 py-2 font-mono">{proc.memory_mb?.toFixed(2) || '0'}MB</td>
+                            <td className="px-4 py-2 font-mono">{formatMb(proc.holding)}</td>
+                            <td className="px-4 py-2 font-mono">{formatMb(proc.alloc)}</td>
+                            <td className="px-4 py-2 font-mono">{formatMb(proc.freed)}</td>
+                            <td className="px-4 py-2 font-mono">{formatMb(proc.net)}</td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                          <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                             No processes found
                           </td>
                         </tr>
@@ -327,86 +359,32 @@ export default function CiscoLogsPage() {
             {/* Environment Tab */}
             {activeTab === 'environment' && (
               <div className="space-y-4">
-                {environment ? (
+                {Array.isArray(environment) && environment.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Temperature */}
-                    {environment.temperature && (
-                      <div className="bg-gradient-to-br from-red-50 to-orange-50 p-6 rounded-lg border border-orange-200">
+                    {environment.map((sensor, idx: number) => (
+                      <div key={idx} className="bg-gradient-to-br from-red-50 to-orange-50 p-6 rounded-lg border border-orange-200">
                         <div className="flex items-center gap-3 mb-4">
                           <Thermometer className="text-red-600" size={24} />
-                          <h3 className="text-lg font-semibold text-gray-900">Temperature</h3>
+                          <h3 className="text-lg font-semibold text-gray-900">{sensor.name || 'Sensor'}</h3>
                         </div>
-                        <div className="space-y-2">
-                          {Array.isArray(environment.temperature) ? (
-                            environment.temperature.map((temp: any, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center">
-                                <span className="text-gray-700">{temp.location}</span>
-                                <span className="font-mono font-semibold">{temp.value}°C</span>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="flex justify-between items-center">
-                              <span className="text-gray-700">Chassis</span>
-                              <span className="font-mono font-semibold">{environment.temperature}°C</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Fans */}
-                    {environment.fans && (
-                      <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-6 rounded-lg border border-blue-200">
-                        <div className="flex items-center gap-3 mb-4">
-                          <Wind className="text-blue-600" size={24} />
-                          <h3 className="text-lg font-semibold text-gray-900">Fans</h3>
-                        </div>
-                        <div className="space-y-2">
-                          {Array.isArray(environment.fans) ? (
-                            environment.fans.map((fan: any, idx: number) => (
-                              <div key={idx}>
-                                <div className="flex justify-between items-center mb-1">
-                                  <span className="text-gray-700">{fan.name}</span>
-                                  <span className={`font-semibold ${
-                                    fan.status === 'ok' ? 'text-green-600' : 'text-red-600'
-                                  }`}>
-                                    {fan.status}
-                                  </span>
-                                </div>
-                                {fan.speed && (
-                                  <p className="text-xs text-gray-600">Speed: {fan.speed} RPM</p>
-                                )}
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-gray-700">{environment.fans}</p>
-                          )}
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between gap-4">
+                            <span className="text-gray-600">Location</span>
+                            <span className="font-medium text-gray-900">{sensor.location || 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-gray-600">State</span>
+                            <span className="font-medium text-gray-900">{sensor.state || 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-gray-600">Reading</span>
+                            <span className="font-mono font-semibold text-gray-900">
+                              {sensor.current_reading} {sensor.units}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    )}
-
-                    {/* Power Supply */}
-                    {environment.power_supply && (
-                      <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-lg border border-green-200">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Power Supply</h3>
-                        <div className="space-y-2">
-                          {Array.isArray(environment.power_supply) ? (
-                            environment.power_supply.map((psu: any, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center">
-                                <span className="text-gray-700">{psu.name}</span>
-                                <span className={`font-semibold ${
-                                  psu.status === 'ok' ? 'text-green-600' : 'text-yellow-600'
-                                }`}>
-                                  {psu.status}
-                                </span>
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-gray-700">{environment.power_supply}</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                    ))}
                   </div>
                 ) : (
                   <p className="text-gray-500">Environment data not available</p>
@@ -459,41 +437,45 @@ export default function CiscoLogsPage() {
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                     <TrendingUp className="text-orange-600" size={20} />
-                    Memory Usage History
+                    Memory Pools
                   </h3>
                   {memoryHistory.length > 0 ? (
                     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-gray-200">
-                            <th className="text-left px-3 py-2 text-gray-700 font-medium">Timestamp</th>
+                            <th className="text-left px-3 py-2 text-gray-700 font-medium">Pool</th>
                             <th className="text-left px-3 py-2 text-gray-700 font-medium">Usage %</th>
+                            <th className="text-left px-3 py-2 text-gray-700 font-medium">Used</th>
+                            <th className="text-left px-3 py-2 text-gray-700 font-medium">Total</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {(Array.isArray(memoryHistory) ? memoryHistory : [memoryHistory]).slice(0, 10).map((entry: any, idx: number) => (
+                          {memoryHistory.slice(0, 10).map((entry, idx: number) => (
                             <tr key={idx} className="border-b border-gray-200 hover:bg-gray-100">
-                              <td className="px-3 py-2">{entry.timestamp || 'N/A'}</td>
+                              <td className="px-3 py-2">{entry.name || 'N/A'}</td>
                               <td className="px-3 py-2">
                                 <div className="flex items-center gap-2">
                                   <div className="w-24 bg-gray-300 rounded-full h-2">
                                     <div
                                       className="bg-orange-600 h-2 rounded-full"
-                                      style={{ width: `${entry.memory_used_percent || entry.used_percent || 0}%` }}
+                                      style={{ width: `${entry.usage_percent || 0}%` }}
                                     />
                                   </div>
                                   <span className="font-mono font-semibold">
-                                    {entry.memory_used_percent || entry.used_percent || 0}%
+                                    {entry.usage_percent || 0}%
                                   </span>
                                 </div>
                               </td>
+                              <td className="px-3 py-2 font-mono">{formatMb(entry.used)}</td>
+                              <td className="px-3 py-2 font-mono">{formatMb(entry.total)}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   ) : (
-                    <p className="text-gray-500">No memory history available</p>
+                    <p className="text-gray-500">No memory pool data available</p>
                   )}
                 </div>
               </div>

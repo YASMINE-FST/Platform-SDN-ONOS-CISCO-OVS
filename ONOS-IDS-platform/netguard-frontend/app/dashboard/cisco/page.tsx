@@ -25,6 +25,12 @@ export default function CiscoDevicesPage() {
   });
   const [error, setError] = useState<string | null>(null);
 
+  function withDevice(path: string) {
+    if (!selectedDevice) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}device=${encodeURIComponent(selectedDevice)}`;
+  }
+
   // Fetch devices
   useEffect(() => {
     fetchDevices();
@@ -67,10 +73,10 @@ export default function CiscoDevicesPage() {
     try {
       setLoading(true);
       const [cpu, memory, interfaces, routes] = await Promise.all([
-        fetch(`/api/cisco/cpu`).then(r => r.ok ? r.json() : {}),
-        fetch(`/api/cisco/memory`).then(r => r.ok ? r.json() : []),
-        fetch(`/api/cisco/interfaces/oper`).then(r => r.ok ? r.json() : []),
-        fetch(`/api/cisco/routes`).then(r => r.ok ? r.json() : []),
+        fetch(withDevice('/api/cisco/cpu')).then(r => r.ok ? r.json() : {}),
+        fetch(withDevice('/api/cisco/memory')).then(r => r.ok ? r.json() : []),
+        fetch(withDevice('/api/cisco/interfaces/oper')).then(r => r.ok ? r.json() : []),
+        fetch(withDevice('/api/cisco/routes')).then(r => r.ok ? r.json() : []),
       ]);
       setMetrics({ cpu, memory, interfaces, routes });
     } catch (err) {

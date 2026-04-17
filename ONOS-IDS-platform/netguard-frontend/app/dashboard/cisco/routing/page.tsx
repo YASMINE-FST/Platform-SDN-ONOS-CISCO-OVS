@@ -31,6 +31,62 @@ export default function CiscoRoutingPage() {
     distance: 1,
   });
 
+  function withDevice(path: string) {
+    if (!selectedDevice) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}device=${encodeURIComponent(selectedDevice)}`;
+  }
+
+  function normalizeOspf(data: unknown): CiscoOspfStatus | null {
+    if (!Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+
+    const first = data[0] as CiscoOspfStatus;
+    const areas = Array.isArray(first.areas)
+      ? first.areas.map((area) => ({
+          ...area,
+          id: area.id || area.area_id || '',
+        }))
+      : [];
+
+    return {
+      ...first,
+      status: areas.length > 0 ? 'Up' : 'Down',
+      areas,
+    };
+  }
+
+  function normalizeCdp(data: unknown): CiscoCdpNeighbor[] {
+    if (!Array.isArray(data)) return [];
+    return data.map((neighbor) => ({
+      ...neighbor,
+      ip_address: neighbor.ip_address || neighbor.ip,
+      local_interface: neighbor.local_interface || neighbor.local_intf,
+      remote_interface: neighbor.remote_interface || neighbor.port_id,
+    }));
+  }
+
+  function normalizeNtp(data: unknown): CiscoNtpStatus | null {
+    if (!data || Array.isArray(data)) return null;
+    return {
+      ...(data as CiscoNtpStatus),
+      status:
+        (data as CiscoNtpStatus).status ||
+        (data as CiscoNtpStatus).synced ||
+        'Unknown',
+    };
+  }
+
+  function normalizeDhcp(data: unknown): CiscoDhcpPool[] {
+    if (!Array.isArray(data)) return [];
+    return data.map((pool) => ({
+      ...pool,
+      name: pool.name || pool.pool_name,
+      utilization: pool.utilization ?? pool.usage_pct,
+    }));
+  }
+
   // Fetch devices on mount
   useEffect(() => {
     fetchDevices();
@@ -51,7 +107,7 @@ export default function CiscoRoutingPage() {
       const devicesList = Array.isArray(data) ? data : (data.devices || []);
       setDevices(devicesList);
       if (devicesList.length > 0) {
-        setSelectedDevice(devicesList[0].id || '');
+        setSelectedDevice(devicesList[0].device_id || devicesList[0].id || '');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching devices');
@@ -65,24 +121,24 @@ export default function CiscoRoutingPage() {
 
       // Fetch all routing data in parallel
       const [ribs, statics, arps, ospf, bgp, cdp, ntp, dhcp] = await Promise.all([
-        fetch('/api/cisco/routes').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/routes/static').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/arp').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/ospf').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/cisco/bgp').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/cdp').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/cisco/ntp').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/cisco/dhcp').then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/routes')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/routes/static')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/arp')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/ospf')).then((r) => (r.ok ? r.json() : null)),
+        fetch(withDevice('/api/cisco/bgp')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/cdp')).then((r) => (r.ok ? r.json() : [])),
+        fetch(withDevice('/api/cisco/ntp')).then((r) => (r.ok ? r.json() : null)),
+        fetch(withDevice('/api/cisco/dhcp')).then((r) => (r.ok ? r.json() : [])),
       ]);
 
       setRoutes(Array.isArray(ribs) ? ribs : []);
       setStaticRoutes(Array.isArray(statics) ? statics : []);
       setArpTable(Array.isArray(arps) ? arps : []);
-      setOspfStatus(ospf);
+      setOspfStatus(normalizeOspf(ospf));
       setBgpRoutes(Array.isArray(bgp) ? bgp : []);
-      setCdpNeighbors(Array.isArray(cdp) ? cdp : []);
-      setNtpStatus(ntp);
-      setDhcpPools(Array.isArray(dhcp) ? dhcp : []);
+      setCdpNeighbors(normalizeCdp(cdp));
+      setNtpStatus(normalizeNtp(ntp));
+      setDhcpPools(normalizeDhcp(dhcp));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching routing data');
     } finally {
@@ -98,7 +154,7 @@ export default function CiscoRoutingPage() {
 
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/routes/static', {
+      const response = await fetch(withDevice('/api/cisco/config/routes/static'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRoute),
@@ -119,7 +175,7 @@ export default function CiscoRoutingPage() {
 
     try {
       setLoading(true);
-      const response = await fetch('/api/cisco/config/routes/static', {
+      const response = await fetch(withDevice('/api/cisco/config/routes/static'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prefix, mask, next_hop: nextHop }),
@@ -143,6 +199,10 @@ export default function CiscoRoutingPage() {
     { id: 'ntp', label: 'NTP', icon: '⏰' },
     { id: 'dhcp', label: 'DHCP Pools', icon: '💾' },
   ];
+  const ospfNeighborCount = ospfStatus?.areas?.reduce(
+    (sum, area) => sum + (area.neighbors ?? 0),
+    0
+  ) ?? 0;
 
   return (
     <div className="space-y-6">
@@ -390,7 +450,7 @@ export default function CiscoRoutingPage() {
                       <div className="bg-gray-50 p-4 rounded">
                         <p className="text-sm text-gray-600">Neighbors</p>
                         <p className="text-lg font-semibold">
-                          {ospfStatus.neighbors?.length ?? 0}
+                          {ospfNeighborCount}
                         </p>
                       </div>
                     </div>
@@ -413,10 +473,16 @@ export default function CiscoRoutingPage() {
                           Prefix
                         </th>
                         <th className="px-4 py-2 text-left text-gray-700 font-medium">
-                          AS Path
+                          Next Hop
                         </th>
                         <th className="px-4 py-2 text-left text-gray-700 font-medium">
-                          Next Hop
+                          Metric
+                        </th>
+                        <th className="px-4 py-2 text-left text-gray-700 font-medium">
+                          Weight
+                        </th>
+                        <th className="px-4 py-2 text-left text-gray-700 font-medium">
+                          Best Path
                         </th>
                       </tr>
                     </thead>
@@ -425,13 +491,15 @@ export default function CiscoRoutingPage() {
                         bgpRoutes.map((route, idx) => (
                           <tr key={idx} className="hover:bg-gray-50">
                             <td className="px-4 py-2">{route.prefix}</td>
-                            <td className="px-4 py-2">{route.as_path}</td>
                             <td className="px-4 py-2">{route.next_hop}</td>
+                            <td className="px-4 py-2">{route.metric ?? 0}</td>
+                            <td className="px-4 py-2">{route.weight ?? 0}</td>
+                            <td className="px-4 py-2">{route.best ? 'Yes' : 'No'}</td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={3} className="px-4 py-8 text-center text-gray-500">
+                          <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
                             No BGP routes
                           </td>
                         </tr>
@@ -487,13 +555,23 @@ export default function CiscoRoutingPage() {
                       <p className="text-sm text-gray-600">Clock Status</p>
                       <p className="text-lg font-semibold">{ntpStatus.status || 'N/A'}</p>
                     </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 p-4 rounded">
+                        <p className="text-sm text-gray-600">Stratum</p>
+                        <p className="text-lg font-semibold">{ntpStatus.stratum ?? 'N/A'}</p>
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded">
+                        <p className="text-sm text-gray-600">Reference Time</p>
+                        <p className="text-sm font-semibold">{ntpStatus.reference_time || 'N/A'}</p>
+                      </div>
+                    </div>
                     {ntpStatus.peers && (
                       <div>
                         <p className="text-sm text-gray-600 mb-2">Configured Peers</p>
                         <ul className="space-y-1">
-                          {ntpStatus.peers.map((peer: any, idx: number) => (
+                          {ntpStatus.peers.map((peer, idx: number) => (
                             <li key={idx} className="text-sm font-mono">
-                              {peer}
+                              {peer.address} {peer.selected ? '(selected)' : ''}
                             </li>
                           ))}
                         </ul>

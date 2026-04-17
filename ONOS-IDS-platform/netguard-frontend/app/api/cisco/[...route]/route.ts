@@ -38,19 +38,16 @@ async function proxyRequest(endpoint: string, options: RequestInit = {}) {
   }
 }
 
-// GET /api/route.ts for each endpoint
-
-export async function GET(request: Request) {
+function getEndpointWithQuery(request: Request) {
   const url = new URL(request.url);
   const pathname = url.pathname;
-
-  // Extract the endpoint from /api/cisco/...
   const endpoint = pathname.replace('/api/cisco', '');
-
-  // Query params
   const query = url.search ? `?${url.searchParams.toString()}` : '';
+  return `${endpoint}${query}`;
+}
 
-  const result = await proxyRequest(`${endpoint}${query}`);
+export async function GET(request: Request) {
+  const result = await proxyRequest(getEndpointWithQuery(request));
 
   if (result.error) {
     return Response.json(result, { status: result.status || 500 });
@@ -60,13 +57,9 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const url = new URL(request.url);
-  const pathname = url.pathname;
-  const endpoint = pathname.replace('/api/cisco', '');
-
   try {
     const body = await request.json();
-    const result = await proxyRequest(endpoint, {
+    const result = await proxyRequest(getEndpointWithQuery(request), {
       method: 'PATCH',
       body: JSON.stringify(body),
     });
@@ -76,7 +69,7 @@ export async function PATCH(request: Request) {
     }
 
     return Response.json(result);
-  } catch (error) {
+  } catch {
     return Response.json(
       { error: true, message: 'Invalid request body' },
       { status: 400 }
@@ -85,13 +78,9 @@ export async function PATCH(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const url = new URL(request.url);
-  const pathname = url.pathname;
-  const endpoint = pathname.replace('/api/cisco', '');
-
   try {
     const body = await request.json();
-    const result = await proxyRequest(endpoint, {
+    const result = await proxyRequest(getEndpointWithQuery(request), {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -101,7 +90,7 @@ export async function POST(request: Request) {
     }
 
     return Response.json(result);
-  } catch (error) {
+  } catch {
     return Response.json(
       { error: true, message: 'Invalid request body' },
       { status: 400 }
@@ -110,13 +99,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const url = new URL(request.url);
-  const pathname = url.pathname;
-  const endpoint = pathname.replace('/api/cisco', '');
-
   try {
     const body = await request.json().catch(() => ({}));
-    const result = await proxyRequest(endpoint, {
+    const result = await proxyRequest(getEndpointWithQuery(request), {
       method: 'DELETE',
       ...(Object.keys(body).length > 0 && { body: JSON.stringify(body) }),
     });
@@ -126,7 +111,7 @@ export async function DELETE(request: Request) {
     }
 
     return Response.json(result);
-  } catch (error) {
+  } catch {
     return Response.json(
       { error: true, message: 'Delete failed' },
       { status: 500 }

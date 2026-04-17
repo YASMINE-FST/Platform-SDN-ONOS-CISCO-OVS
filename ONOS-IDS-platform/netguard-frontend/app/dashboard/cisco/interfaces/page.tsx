@@ -4,6 +4,12 @@ import { useState, useEffect } from 'react';
 import { AlertCircle, Wifi, RefreshCw, Power, Settings } from 'lucide-react';
 import type { CiscoDevice, CiscoInterface } from '@/lib/cisco-types';
 
+interface InterfaceConfigModal {
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
 export default function CiscoInterfacesPage() {
   const [selectedDevice, setSelectedDevice] = useState('');
   const [devices, setDevices] = useState<CiscoDevice[]>([]);
@@ -13,7 +19,26 @@ export default function CiscoInterfacesPage() {
   const [filterStatus, setFilterStatus] = useState('all'); // all, up, down
   const [searchTerm, setSearchTerm] = useState('');
   const [configuring, setConfiguring] = useState(false);
-  const [configModal, setConfigModal] = useState<any>(null);
+  const [configModal, setConfigModal] = useState<InterfaceConfigModal | null>(null);
+
+  function withDevice(path: string) {
+    if (!selectedDevice) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}device=${encodeURIComponent(selectedDevice)}`;
+  }
+
+  function normalizeInterface(iface: CiscoInterface): CiscoInterface {
+    const inErrors = iface.stats?.in_errors ?? 0;
+    const outErrors = iface.stats?.out_errors ?? 0;
+    return {
+      ...iface,
+      in_octets: iface.in_octets ?? iface.stats?.in_octets ?? 0,
+      out_octets: iface.out_octets ?? iface.stats?.out_octets ?? 0,
+      in_pkts: iface.in_pkts ?? iface.stats?.in_packets ?? 0,
+      out_pkts: iface.out_pkts ?? iface.stats?.out_packets ?? 0,
+      errors: iface.errors ?? inErrors + outErrors,
+    };
+  }
 
   // Fetch devices on mount
   useEffect(() => {
@@ -36,7 +61,7 @@ export default function CiscoInterfacesPage() {
       const devicesList = Array.isArray(data) ? data : (data.devices || []);
       setDevices(devicesList);
       if (devicesList.length > 0) {
-        setSelectedDevice(devicesList[0].id || '');
+        setSelectedDevice(devicesList[0].device_id || devicesList[0].id || '');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching devices');
@@ -49,10 +74,10 @@ export default function CiscoInterfacesPage() {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch('/api/cisco/interfaces/oper');
+      const response = await fetch(withDevice('/api/cisco/interfaces/oper'));
       if (!response.ok) throw new Error('Failed to fetch interfaces');
       const data = await response.json();
-      setInterfaces(Array.isArray(data) ? data : []);
+      setInterfaces(Array.isArray(data) ? data.map((iface) => normalizeInterface(iface)) : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching interfaces');
       setInterfaces([]);
@@ -64,7 +89,7 @@ export default function CiscoInterfacesPage() {
   const handleEnableInterface = async (interfaceName: string) => {
     try {
       setConfiguring(true);
-      const response = await fetch('/api/cisco/config/interface', {
+      const response = await fetch(withDevice('/api/cisco/config/interface'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: interfaceName, enabled: true }),
@@ -81,7 +106,7 @@ export default function CiscoInterfacesPage() {
   const handleDisableInterface = async (interfaceName: string) => {
     try {
       setConfiguring(true);
-      const response = await fetch('/api/cisco/config/interface', {
+      const response = await fetch(withDevice('/api/cisco/config/interface'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: interfaceName, enabled: false }),
@@ -95,7 +120,7 @@ export default function CiscoInterfacesPage() {
     }
   };
 
-  const handleConfigInterface = (iface: any) => {
+  const handleConfigInterface = (iface: CiscoInterface) => {
     setConfigModal({
       name: iface.name,
       description: iface.description || '',
@@ -107,7 +132,7 @@ export default function CiscoInterfacesPage() {
     if (!configModal) return;
     try {
       setConfiguring(true);
-      const response = await fetch('/api/cisco/config/interface', {
+      const response = await fetch(withDevice('/api/cisco/config/interface'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
