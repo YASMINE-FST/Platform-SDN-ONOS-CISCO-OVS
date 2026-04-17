@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.onos</groupId>
+    <artifactId>csrmanager</artifactId>
+    <version>1.0.0</version>
+    <packaging>bundle</packaging>
+
+    <name>CsrManager</name>
+    <description>
+        Application ONOS — Cisco CSR1000V NETCONF Manager.
+        Collecte métriques (CPU, mémoire, interfaces, routes, OSPF, BGP, syslog...)
+        et expose une API REST complète dans ONOS pour remplacer les appels directs
+        du backend Flask vers le routeur.
+    </description>
+
+    <properties>
+        <!-- ── Versions ─────────────────────────────────────────── -->
+        <onos.version>2.7.0</onos.version>
+        <java.version>11</java.version>
+
+        <!-- ── Métadonnées de l'app ONOS ────────────────────────── -->
+        <onos.app.name>org.onos.csrmanager</onos.app.name>
+        <onos.app.title>CsrManager</onos.app.title>
+        <onos.app.origin>YASMINE-KIRCH</onos.app.origin>
+        <onos.app.category>Monitoring</onos.app.category>
+        <onos.app.url>https://github.com/yasmine-kirch/onos-cisco</onos.app.url>
+        <onos.app.readme>Cisco CSR1000V NETCONF Manager — métriques, routage, syslog, configuration</onos.app.readme>
+        <onos.app.requires>org.onosproject.netconf</onos.app.requires>
+
+        <!-- ── REST / Swagger ───────────────────────────────────── -->
+        <!-- Chemin distinct de /onos/v1 pour éviter le conflit avec onos-rest -->
+        <web.context>/csr/v1</web.context>
+        <api.version>1.0.0</api.version>
+        <api.title>CsrManager REST API</api.title>
+        <api.description>Cisco IOS-XE metrics and configuration via ONOS NETCONF</api.description>
+        <api.package>org.onos.csrmanager.rest</api.package>
+
+        <!-- ── Compilateur ──────────────────────────────────────── -->
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+
+        <!-- ══ ONOS ══════════════════════════════════════════════ -->
+        <dependency>
+            <groupId>org.onosproject</groupId>
+            <artifactId>onos-api</artifactId>
+            <version>${onos.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- REST framework (AbstractWebResource, AbstractWebApplication) -->
+        <dependency>
+            <groupId>org.onosproject</groupId>
+            <artifactId>onos-rest</artifactId>
+            <version>${onos.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- NETCONF subsystem (NetconfController, NetconfSession) -->
+        <dependency>
+            <groupId>org.onosproject</groupId>
+            <artifactId>onos-protocols-netconf-api</artifactId>
+            <version>${onos.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ══ JAX-RS ════════════════════════════════════════════ -->
+        <dependency>
+            <groupId>javax.ws.rs</groupId>
+            <artifactId>javax.ws.rs-api</artifactId>
+            <version>2.1.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ══ JSON ══════════════════════════════════════════════ -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.10.5</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ══ OSGi ══════════════════════════════════════════════ -->
+        <dependency>
+            <groupId>org.osgi</groupId>
+            <artifactId>osgi.cmpn</artifactId>
+            <version>7.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.osgi</groupId>
+            <artifactId>org.osgi.core</artifactId>
+            <version>6.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ══ Logging ═══════════════════════════════════════════ -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.25</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ══ Tests ═════════════════════════════════════════════ -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>3.12.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.onosproject</groupId>
+            <artifactId>onos-api</artifactId>
+            <version>${onos.version}</version>
+            <classifier>tests</classifier>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+
+            <!-- ── OSGi Bundle plugin ──────────────────────────── -->
+            <plugin>
+                <groupId>org.apache.felix</groupId>
+                <artifactId>maven-bundle-plugin</artifactId>
+                <version>4.2.1</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <instructions>
+                        <!-- WAB = Web Application Bundle (embarque le WEB-INF) -->
+                        <_wab>src/main/webapp</_wab>
+                        <Bundle-SymbolicName>
+                            ${project.groupId}.${project.artifactId}
+                        </Bundle-SymbolicName>
+                        <Import-Package>
+                            org.glassfish.jersey.servlet;resolution:=optional,
+                            *
+                        </Import-Package>
+                        <!-- Chemin du contexte REST dans ONOS -->
+                        <Web-ContextPath>${web.context}</Web-ContextPath>
+                    </instructions>
+                </configuration>
+            </plugin>
+
+            <!-- ── ONOS Maven plugin (.oar + app.xml + swagger) ── -->
+            <plugin>
+                <groupId>org.onosproject</groupId>
+                <artifactId>onos-maven-plugin</artifactId>
+                <version>2.1</version>
+                <executions>
+                    <!-- Génère les metadonnées de configuration OSGi -->
+                    <execution>
+                        <id>cfg</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>cfg</goal></goals>
+                    </execution>
+                    <!-- Génère la doc Swagger -->
+                    <execution>
+                        <id>swagger</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>swagger</goal></goals>
+                    </execution>
+                    <!-- Génère le fichier .oar (ONOS Application aRchive) -->
+                    <execution>
+                        <id>app</id>
+                        <phase>package</phase>
+                        <goals><goal>app</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- ── Java compiler ──────────────────────────────── -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                </configuration>
+            </plugin>
+
+            <!-- ── Surefire — désactivé (pas d'internet pour deps) ── -->
+            <!-- Lancer les tests manuellement : mvn test (quand réseau dispo) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.5</version>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
+        </plugins>
+    </build>
+
+</project>
