@@ -104,19 +104,37 @@ public class AppComponent implements CsrManagerService {
                 if (!id.toString().startsWith("netconf:")) return;
                 if (!deviceService.isAvailable(id))        return;
 
-                try {
-                    MetricsStore.updateCpu(id,        metricsCollector.getCpu(id));
-                    MetricsStore.updateMemory(id,     metricsCollector.getMemory(id));
-                    MetricsStore.updateInterfaces(id, metricsCollector.getInterfacesOper(id));
-                    MetricsStore.updateRoutes(id,     routingCollector.getRoutes(id));
-                    MetricsStore.updateLogs(id,       logsCollector.getSyslog(id, 100));
-                    log.debug("Collecte OK pour {}", id);
-                } catch (Exception e) {
-                    log.warn("Erreur collecte pour {} : {}", id, e.getMessage());
-                }
+                // Chaque métrique dans son propre try/catch : une erreur sur
+                // un RPC NETCONF n'empêche pas les autres caches d'être mis à jour.
+                safe(id, "cpu",              () -> MetricsStore.updateCpu(id,              metricsCollector.getCpu(id)));
+                safe(id, "memory",           () -> MetricsStore.updateMemory(id,           metricsCollector.getMemory(id)));
+                safe(id, "processes",        () -> MetricsStore.updateProcesses(id,        metricsCollector.getProcesses(id)));
+                safe(id, "environment",      () -> MetricsStore.updateEnvironment(id,      metricsCollector.getEnvironment(id)));
+                safe(id, "version",          () -> MetricsStore.updateVersion(id,          metricsCollector.getVersion(id)));
+                safe(id, "interfacesConfig", () -> MetricsStore.updateInterfacesConfig(id, metricsCollector.getInterfacesConfig(id)));
+                safe(id, "interfacesOper",   () -> MetricsStore.updateInterfaces(id,       metricsCollector.getInterfacesOper(id)));
+                safe(id, "routes",           () -> MetricsStore.updateRoutes(id,           routingCollector.getRoutes(id)));
+                safe(id, "staticRoutes",     () -> MetricsStore.updateStaticRoutes(id,     routingCollector.getStaticRoutesConfig(id)));
+                safe(id, "arp",              () -> MetricsStore.updateArp(id,              routingCollector.getArp(id)));
+                safe(id, "ospf",             () -> MetricsStore.updateOspf(id,             routingCollector.getOspf(id)));
+                safe(id, "bgp",              () -> MetricsStore.updateBgp(id,              routingCollector.getBgp(id)));
+                safe(id, "cdp",              () -> MetricsStore.updateCdp(id,              routingCollector.getCdp(id)));
+                safe(id, "ntp",              () -> MetricsStore.updateNtp(id,              routingCollector.getNtp(id)));
+                safe(id, "dhcp",             () -> MetricsStore.updateDhcp(id,             routingCollector.getDhcpPools(id)));
+                safe(id, "logs",             () -> MetricsStore.updateLogs(id,             logsCollector.getSyslog(id, 100)));
+
+                log.debug("Collecte OK pour {}", id);
             });
         } catch (Exception e) {
             log.warn("collectAll() erreur globale : {}", e.getMessage());
+        }
+    }
+
+    private void safe(DeviceId id, String metric, Runnable r) {
+        try {
+            r.run();
+        } catch (Exception e) {
+            log.warn("Collecte '{}' KO pour {} : {}", metric, id, e.getMessage());
         }
     }
 
